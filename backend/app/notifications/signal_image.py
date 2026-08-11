@@ -2,8 +2,11 @@
 dark trading-terminal look, so Telegram alerts read as a premium at-a-glance
 card instead of a wall of plain text."""
 
+from __future__ import annotations
+
 import io
-from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -27,26 +30,77 @@ COLOR_BUY_SOFT = (34, 197, 94, 36)
 COLOR_SELL = (244, 63, 94)
 COLOR_SELL_SOFT = (244, 63, 94, 36)
 
-FONT_DIR = "C:/Windows/Fonts/"
+# Prefer fonts that include ₹ (U+20B9), en-dash, and · on Windows and Ubuntu.
+_FONT_CANDIDATES: dict[str, list[str]] = {
+    "sans": [
+        r"C:\Windows\Fonts\segoeui.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    ],
+    "sans_bold": [
+        r"C:\Windows\Fonts\segoeuib.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    ],
+    "mono": [
+        r"C:\Windows\Fonts\consola.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeMono.ttf",
+    ],
+    "mono_bold": [
+        r"C:\Windows\Fonts\consolab.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansMono-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf",
+    ],
+}
 
 
-def _font(name: str, size: int) -> ImageFont.FreeTypeFont:
-    try:
-        return ImageFont.truetype(FONT_DIR + name, size)
-    except OSError:
-        return ImageFont.load_default(size=size)
+@lru_cache(maxsize=32)
+def _font(family: str, size: int) -> ImageFont.ImageFont:
+    for path in _FONT_CANDIDATES.get(family, []):
+        if Path(path).is_file():
+            try:
+                return ImageFont.truetype(path, size)
+            except OSError:
+                continue
+    return ImageFont.load_default(size=size)
 
 
-F_SYMBOL = _font("segoeuib.ttf", 40)
-F_COMPANY = _font("segoeui.ttf", 22)
-F_BADGE = _font("segoeuib.ttf", 24)
-F_META = _font("segoeui.ttf", 18)
-F_LABEL = _font("segoeuib.ttf", 15)
-F_PRICE = _font("consolab.ttf", 23)
-F_SUB = _font("consola.ttf", 15)
-F_FOOTER_LABEL = _font("segoeui.ttf", 18)
-F_FOOTER_VALUE = _font("consolab.ttf", 20)
-F_BRAND = _font("segoeui.ttf", 16)
+F_SYMBOL = None
+F_COMPANY = None
+F_BADGE = None
+F_META = None
+F_LABEL = None
+F_PRICE = None
+F_SUB = None
+F_FOOTER_LABEL = None
+F_FOOTER_VALUE = None
+F_BRAND = None
+
+
+def _ensure_fonts() -> None:
+    global F_SYMBOL, F_COMPANY, F_BADGE, F_META, F_LABEL
+    global F_PRICE, F_SUB, F_FOOTER_LABEL, F_FOOTER_VALUE, F_BRAND
+    if F_SYMBOL is not None:
+        return
+    F_SYMBOL = _font("sans_bold", 40)
+    F_COMPANY = _font("sans", 22)
+    F_BADGE = _font("sans_bold", 24)
+    F_META = _font("sans", 18)
+    F_LABEL = _font("sans_bold", 15)
+    F_PRICE = _font("mono_bold", 23)
+    F_SUB = _font("mono", 15)
+    F_FOOTER_LABEL = _font("sans", 18)
+    F_FOOTER_VALUE = _font("mono_bold", 20)
+    F_BRAND = _font("sans", 16)
 
 
 def _rounded_rect(draw: ImageDraw.ImageDraw, box, radius, fill=None, outline=None, width=1):
@@ -73,6 +127,7 @@ def _price_box(draw, xy, w, h, label, value, tone_rgb, tone_soft_rgba, sub_lines
 
 
 def render_signal_card(signal) -> bytes:
+    _ensure_fonts()
     height = 520
     img = Image.new("RGB", (WIDTH, height), COLOR_BG)
     draw = ImageDraw.Draw(img)

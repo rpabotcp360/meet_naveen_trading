@@ -57,9 +57,10 @@ ufw status
 
 ```bash
 apt update
-apt install -y git curl build-essential ca-certificates gnupg
+apt install -y git curl build-essential ca-certificates gnupg fonts-dejavu-core fonts-noto-core
 ```
 
+`fonts-dejavu-core` / `fonts-noto-core` provide ₹ and other Unicode glyphs for Telegram signal PNGs.
 ### Python 3.12
 
 **Ubuntu 24.04** (Python 3.12 is default):
@@ -142,8 +143,8 @@ BACKEND_PORT=8000
 LOG_LEVEL=INFO
 
 # Optional: create/update a dashboard user on every backend start
-AUTH_USERNAME=admin
-AUTH_PASSWORD=choose-a-strong-password
+AUTH_USERNAME=841318897
+AUTH_PASSWORD=Warmachines@111
 
 # Optional: Analytics token can also be set in Settings UI
 # UPSTOX_API_KEY=eyJ...
@@ -153,20 +154,6 @@ UPSTOX_REDIRECT_URI=https://algo.meetnaveen.in/api/v1/upstox/callback
 ```
 
 SQLite DB defaults to `/opt/meet_naveen_trading/data/scanner.db`. Logs go under `/opt/meet_naveen_trading/logs`.
-
-### CORS (required)
-
-Backend CORS currently allows only `http://127.0.0.1:3000` and `http://localhost:3000`.
-
-Edit `backend/app/main.py` and set:
-
-```python
-allow_origins=[
-    "http://127.0.0.1:3000",
-    "http://localhost:3000",
-    "https://algo.meetnaveen.in",
-],
-```
 
 ---
 
@@ -497,7 +484,22 @@ Headless servers use `data/.secrets.json` (chmod 600) when OS keyring is unavail
 
 Optional: put `UPSTOX_API_KEY` in `/opt/meet_naveen_trading/.env` and restart the backend to bootstrap the Analytics Token without the UI.
 
-### nginx 502 / “Backend offline” in the UI
+### ChunkLoadError / `_next/static/chunks/...` 404
+
+Browser has stale HTML after a frontend rebuild (or Cloudflare cached an old page).
+
+```bash
+cd /opt/meet_naveen_trading/frontend
+rm -rf .next
+npm run build
+systemctl restart nse-scanner-frontend
+# confirm production start (not next dev):
+systemctl status nse-scanner-frontend --no-pager
+curl -sI https://algo.meetnaveen.in/ | head -20
+```
+
+Then hard-refresh the browser (`Ctrl+Shift+R`). If Cloudflare sits in front, purge cache for `algo.meetnaveen.in` (or pause CF proxy briefly) so clients get the new HTML.
+
 
 `https://algo.meetnaveen.in/health` returning **502** means nginx cannot reach uvicorn on `127.0.0.1:8000`.
 
