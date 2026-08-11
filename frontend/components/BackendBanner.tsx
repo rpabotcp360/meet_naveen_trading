@@ -33,8 +33,14 @@ export function BackendBanner() {
     <div className="flex items-center justify-center gap-2 border-b border-warning/30 bg-warning-soft px-4 py-2 text-center text-sm text-warning">
       <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={2.25} />
       <span>
-        Backend offline — start it with{" "}
-        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono-num text-foreground">.\scripts\start-backend.ps1</code>
+        Backend offline — on Ubuntu run{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono-num text-foreground">
+          systemctl restart nse-scanner-backend
+        </code>
+        ; on Windows use{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono-num text-foreground">
+          .\scripts\start-backend.ps1
+        </code>
       </span>
     </div>
   );

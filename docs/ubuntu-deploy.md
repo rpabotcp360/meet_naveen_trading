@@ -95,15 +95,9 @@ apt install -y nginx certbot python3-certbot-nginx
 systemctl enable --now nginx
 ```
 
-### Secret storage (keyring)
+### Secret storage
 
-The app stores Upstox / Telegram / login secrets via Python `keyring` (same idea as Windows Credential Manager). On a headless server install:
-
-```bash
-apt install -y dbus-x11 gnome-keyring libsecret-1-0
-```
-
-If keyring fails under systemd (no interactive login session), see [Troubleshooting: keyring](#troubleshooting-keyring).
+On Windows the app uses the OS credential store via `keyring`. On headless Ubuntu (no Secret Service), it automatically falls back to a mode-`600` file at `data/.secrets.json`. No extra gnome-keyring packages are required for the app to start.
 
 ---
 
@@ -492,19 +486,32 @@ Re-run issue if needed:
 certbot --nginx -d algo.meetnaveen.in --force-renewal
 ```
 
-### Troubleshooting: keyring
+### Secrets / keyring
 
-If Settings cannot save secrets under systemd:
+Headless servers use `data/.secrets.json` (chmod 600) when OS keyring is unavailable. Keep that file private; it is under the gitignored `data/` directory.
 
-1. Confirm packages: `dbus-x11 gnome-keyring libsecret-1-0`
-2. Fallback: put `UPSTOX_API_KEY` in `/opt/meet_naveen_trading/.env` and restart backend
-3. Ensure `/root` is writable
+Optional: put `UPSTOX_API_KEY` in `/opt/meet_naveen_trading/.env` and restart the backend to bootstrap the Analytics Token without the UI.
 
-### nginx 502
+### nginx 502 / “Backend offline” in the UI
+
+`https://algo.meetnaveen.in/health` returning **502** means nginx cannot reach uvicorn on `127.0.0.1:8000`.
 
 ```bash
-systemctl status nse-scanner-backend nse-scanner-frontend --no-pager
+systemctl status nse-scanner-backend -l --no-pager
+journalctl -u nse-scanner-backend -n 80 --no-pager
 curl -s http://127.0.0.1:8000/health
+systemctl restart nse-scanner-backend
+systemctl enable nse-scanner-backend
+curl -s http://127.0.0.1:8000/health
+curl -sI https://algo.meetnaveen.in/health
+```
+
+If the unit is missing, create it (section 6) then `systemctl daemon-reload && systemctl enable --now nse-scanner-backend`.
+
+Also confirm frontend/nginx:
+
+```bash
+systemctl status nse-scanner-frontend --no-pager
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/
 nginx -t
 ```
