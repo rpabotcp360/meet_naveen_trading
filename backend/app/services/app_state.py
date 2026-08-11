@@ -330,7 +330,7 @@ class AppState:
             backend="ok",
             upstox_rest="connected" if self.auth.is_authenticated() else "disconnected",
             upstox_websocket=self.upstox_ws.state,
-            telegram="configured" if has_secret(TELEGRAM_BOT_TOKEN) else "not_configured",
+            telegram="connected" if has_secret(TELEGRAM_BOT_TOKEN) else "not_configured",
             sqlite="ok",
             frontend_websocket=self.browser_ws.state,
             scanner_state=self.scanner_state,
