@@ -140,6 +140,10 @@ BACKEND_HOST=127.0.0.1
 BACKEND_PORT=8000
 LOG_LEVEL=INFO
 
+# Optional: bootstrap dashboard login (otherwise create account on first visit to /login)
+# AUTH_USERNAME=admin
+# AUTH_PASSWORD=choose-a-strong-password
+
 # Optional: Analytics token can also be set in Settings UI
 # UPSTOX_API_KEY=eyJ...
 
@@ -395,7 +399,7 @@ systemctl reload nginx
 
 1. Open https://algo.meetnaveen.in
 2. Confirm browser shows a valid lock / certificate for `algo.meetnaveen.in`
-3. Create / log in with app credentials
+3. **First login**: if no account exists yet, `/login` shows **Create your admin account** (or set `AUTH_USERNAME` / `AUTH_PASSWORD` in `.env` and restart backend). Then sign in.
 4. **Upstox**: Settings → paste Analytics Token → Save. See [upstox-setup.md](upstox-setup.md).
 5. **Telegram**: Settings → Bot Token + Chat ID → Send Test. See [telegram-setup.md](telegram-setup.md).
 6. **Scanner**: Settings → Start Scanner (during NSE market hours, Asia/Kolkata).

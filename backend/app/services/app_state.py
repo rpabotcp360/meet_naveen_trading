@@ -94,7 +94,19 @@ class AppState:
         settings = get_settings()
         if settings.upstox_api_key:
             self.auth.settings.upstox_api_key = settings.upstox_api_key
+        self._bootstrap_auth_from_env()
         self._bootstrap_upstox_token_from_env()
+
+    def _bootstrap_auth_from_env(self) -> None:
+        from app.core.auth import credentials_configured, set_credentials
+
+        if credentials_configured():
+            return
+        settings = get_settings()
+        username = settings.auth_username.strip()
+        password = settings.auth_password.strip()
+        if username and password:
+            set_credentials(username, password)
 
     def _bootstrap_upstox_token_from_env(self) -> None:
         if self.auth.is_authenticated():

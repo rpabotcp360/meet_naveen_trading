@@ -19,17 +19,31 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
     throw new Error(`Cannot reach backend at ${API_URL}. Start the backend first.`);
   }
   if (res.status === 401) {
-    clearToken();
-    if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+    const detail = await readErrorDetail(res);
+    const onLogin = typeof window !== "undefined" && window.location.pathname === "/login";
+    if (!onLogin) {
+      clearToken();
       window.location.href = "/login";
+      throw new Error("Session expired — please log in again.");
     }
-    throw new Error("Session expired — please log in again.");
+    throw new Error(detail || "Invalid username or password");
   }
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || res.statusText);
+    throw new Error((await readErrorDetail(res)) || res.statusText);
   }
   return res.json();
+}
+
+async function readErrorDetail(res: Response): Promise<string> {
+  const text = await res.text();
+  if (!text) return "";
+  try {
+    const data = JSON.parse(text) as { detail?: unknown };
+    if (typeof data.detail === "string") return data.detail;
+  } catch {
+    /* plain text body */
+  }
+  return text;
 }
 
 export function cn(...classes: (string | false | undefined)[]) {

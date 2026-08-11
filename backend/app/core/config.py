@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     upstox_api_key: str = ""
     upstox_redirect_uri: str = "http://127.0.0.1:8000/api/v1/upstox/callback"
 
+    # Bootstrap dashboard login on first start (stored in keyring / data/.secrets.json)
+    auth_username: str = ""
+    auth_password: str = ""
+
     default_capital_per_trade: float = 20000.0
     default_strategy_mode: str = "balanced"
     default_top_n: int = 30

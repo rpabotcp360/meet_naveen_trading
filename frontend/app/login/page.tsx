@@ -1,28 +1,49 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Lock, TrendingUp, User } from "lucide-react";
 import { setToken } from "@/lib/auth";
-import { apiFetch } from "@/lib/utils";
+import { API_URL, apiFetch } from "@/lib/utils";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [configured, setConfigured] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/v1/auth/status`, {
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!res.ok) throw new Error("status failed");
+        const data = (await res.json()) as { configured: boolean };
+        if (!cancelled) setConfigured(Boolean(data.configured));
+      } catch {
+        if (!cancelled) setConfigured(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const isSetup = configured === false;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
-      const res = await apiFetch<{ token: string }>("/api/v1/auth/login", {
+      const path = isSetup ? "/api/v1/auth/setup" : "/api/v1/auth/login";
+      const res = await apiFetch<{ token: string }>(path, {
         method: "POST",
         body: JSON.stringify({ username, password }),
       });
       setToken(res.token);
-      // Hard navigation so every provider (WebSocket included) remounts
-      // and immediately picks up the freshly stored token.
       window.location.href = "/";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -40,7 +61,13 @@ export default function LoginPage() {
           </span>
           <div className="text-center">
             <h1 className="text-lg font-semibold text-foreground">NSE Intraday Scanner</h1>
-            <p className="text-xs text-muted">Sign in to continue</p>
+            <p className="text-xs text-muted">
+              {configured === null
+                ? "Loading…"
+                : isSetup
+                  ? "Create your admin account"
+                  : "Sign in to continue"}
+            </p>
           </div>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -53,6 +80,7 @@ export default function LoginPage() {
                 onChange={(e) => setUsername(e.target.value)}
                 autoFocus
                 required
+                minLength={3}
                 autoComplete="username"
                 className="min-h-11 w-full rounded-lg border border-border bg-surface-2 py-2.5 pl-10 pr-3 text-sm text-foreground focus:border-accent"
               />
@@ -67,18 +95,30 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                autoComplete="current-password"
+                minLength={isSetup ? 6 : 1}
+                autoComplete={isSetup ? "new-password" : "current-password"}
                 className="min-h-11 w-full rounded-lg border border-border bg-surface-2 py-2.5 pl-10 pr-3 text-sm text-foreground focus:border-accent"
               />
             </div>
           </label>
+          {isSetup && (
+            <p className="text-xs text-muted">
+              First-time setup: choose a username (min 3) and password (min 6). This creates the only admin login.
+            </p>
+          )}
           {error && <p className="text-xs text-sell">{error}</p>}
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || configured === null}
             className="min-h-11 w-full cursor-pointer rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {loading ? "Signing in…" : "Sign In"}
+            {loading
+              ? isSetup
+                ? "Creating…"
+                : "Signing in…"
+              : isSetup
+                ? "Create account"
+                : "Sign In"}
           </button>
         </form>
       </div>
