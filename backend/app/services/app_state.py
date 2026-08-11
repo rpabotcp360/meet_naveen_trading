@@ -98,15 +98,20 @@ class AppState:
         self._bootstrap_upstox_token_from_env()
 
     def _bootstrap_auth_from_env(self) -> None:
-        from app.core.auth import credentials_configured, set_credentials
+        import logging
 
-        if credentials_configured():
-            return
+        from app.core.auth import set_credentials
+
         settings = get_settings()
         username = settings.auth_username.strip()
         password = settings.auth_password.strip()
-        if username and password:
-            set_credentials(username, password)
+        if not username or not password:
+            return
+        # Always apply when both are set so updating .env + restart resets login.
+        set_credentials(username, password)
+        logging.getLogger(__name__).info(
+            "Dashboard credentials loaded from AUTH_USERNAME / AUTH_PASSWORD"
+        )
 
     def _bootstrap_upstox_token_from_env(self) -> None:
         if self.auth.is_authenticated():

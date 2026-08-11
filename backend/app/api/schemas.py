@@ -21,6 +21,12 @@ class LoginResponse(BaseModel):
     expires_at: datetime
 
 
+class SignupResponse(BaseModel):
+    ok: bool = True
+    username: str
+    message: str = "Account created. Please sign in."
+
+
 class SystemStatusResponse(BaseModel):
     backend: str = "ok"
     upstox_rest: str = "unknown"

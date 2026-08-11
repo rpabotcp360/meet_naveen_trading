@@ -26,8 +26,15 @@ def get_engine():
 
 def init_db() -> None:
     engine = get_engine()
+    # Ensure model metadata is registered before create_all.
+    from app.storage import models as _models  # noqa: F401
+
     SQLModel.metadata.create_all(engine)
     _apply_column_migrations(engine)
+    from app.core.auth import migrate_legacy_keyring_user
+
+    with Session(engine) as session:
+        migrate_legacy_keyring_user(session)
 
 
 def _apply_column_migrations(engine) -> None:

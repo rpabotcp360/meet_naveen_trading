@@ -1,20 +1,20 @@
-"""Single-user local auth. Credentials live only in the OS keyring (same
-mechanism already used for the Upstox/Telegram tokens) — never in a source
-file or in plaintext in the database. Sessions are persisted in SQLite so a
-backend restart during development doesn't force a re-login every time."""
+"""Dashboard auth: users in SQLite, sessions in SQLite."""
+
+from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta
 
 from sqlmodel import Session, select
 
-from app.core.secrets import AUTH_PASSWORD_HASH, AUTH_USERNAME, get_secret, set_secret
-from app.storage.models import AuthSession
+from app.storage.models import AuthSession, AuthUser
 
 SESSION_TTL = timedelta(days=7)
 PBKDF2_ITERATIONS = 200_000
+logger = logging.getLogger(__name__)
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -32,25 +32,29 @@ def verify_password(password: str, stored: str) -> bool:
     return secrets.compare_digest(candidate, stored)
 
 
-def set_credentials(username: str, password: str) -> None:
-    set_secret(AUTH_USERNAME, username)
-    set_secret(AUTH_PASSWORD_HASH, hash_password(password))
+def get_user(session: Session, username: str) -> AuthUser | None:
+    return session.exec(select(AuthUser).where(AuthUser.username == username)).first()
 
 
-def credentials_configured() -> bool:
-    return bool(get_secret(AUTH_USERNAME) and get_secret(AUTH_PASSWORD_HASH))
+def user_exists(session: Session, username: str) -> bool:
+    return get_user(session, username) is not None
 
 
-def verify_credentials(username: str, password: str) -> bool:
-    stored_username = get_secret(AUTH_USERNAME)
-    stored_hash = get_secret(AUTH_PASSWORD_HASH)
-    if not stored_username or not stored_hash:
-        return False
-    # Compare usernames with constant-time equality too — this is a
-    # single-user login, so the username is effectively part of the secret.
-    if not secrets.compare_digest(username, stored_username):
-        return False
-    return verify_password(password, stored_hash)
+def create_user(session: Session, username: str, password: str) -> AuthUser:
+    user = AuthUser(username=username, password_hash=hash_password(password))
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return user
+
+
+def verify_credentials(session: Session, username: str, password: str) -> AuthUser | None:
+    user = get_user(session, username)
+    if not user:
+        return None
+    if not verify_password(password, user.password_hash):
+        return None
+    return user
 
 
 def create_session(session: Session, username: str) -> tuple[str, datetime]:
@@ -85,3 +89,41 @@ def purge_expired_sessions(session: Session) -> None:
     for record in session.exec(stmt).all():
         session.delete(record)
     session.commit()
+
+
+def migrate_legacy_keyring_user(session: Session) -> None:
+    """One-time: move old single-user keyring credentials into auth_users."""
+    if session.exec(select(AuthUser).limit(1)).first():
+        return
+    try:
+        from app.core.secrets import AUTH_PASSWORD_HASH, AUTH_USERNAME, get_secret
+
+        username = (get_secret(AUTH_USERNAME) or "").strip()
+        password_hash = get_secret(AUTH_PASSWORD_HASH)
+        if username and password_hash:
+            session.add(AuthUser(username=username, password_hash=password_hash))
+            session.commit()
+            logger.info("Migrated legacy keyring login user %s into auth_users", username)
+    except Exception:
+        logger.exception("Legacy keyring auth migration skipped")
+
+
+# Back-compat helpers used by env bootstrap / older tests
+def set_credentials(username: str, password: str) -> None:
+    from app.storage.database import session_scope
+
+    with session_scope() as session:
+        existing = get_user(session, username)
+        if existing:
+            existing.password_hash = hash_password(password)
+            session.add(existing)
+            session.commit()
+        else:
+            create_user(session, username, password)
+
+
+def credentials_configured() -> bool:
+    from app.storage.database import session_scope
+
+    with session_scope() as session:
+        return session.exec(select(AuthUser).limit(1)).first() is not None
