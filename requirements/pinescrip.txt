@@ -1,0 +1,575 @@
+//@version=6
+strategy("Naveen Intraday Long Only V3.2 CLEAN", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, commission_type=strategy.commission.percent, commission_value=0.03, pyramiding=0, process_orders_on_close=true)
+
+// ============================================================
+// 1. INPUTS
+// ============================================================
+
+// EMA
+fastEmaLength = input.int(9, "Fast EMA", minval=1, display=display.none)
+slowEmaLength = input.int(21, "Slow EMA", minval=1, display=display.none)
+trendEmaLength = input.int(200, "Major Trend EMA", minval=1, display=display.none)
+
+// RSI
+rsiLength = input.int(14, "RSI Length", minval=1, display=display.none)
+
+// MACD
+macdFast = input.int(12, "MACD Fast", display=display.none)
+macdSlow = input.int(26, "MACD Slow", display=display.none)
+macdSignalLength = input.int(9, "MACD Signal", display=display.none)
+
+// Supertrend
+supertrendFactor = input.float(3.0, "Supertrend Factor", display=display.none)
+supertrendAtrLength = input.int(10, "Supertrend ATR Length", display=display.none)
+
+// Volume
+volumeLength = input.int(20, "Volume Average Length", display=display.none)
+volumeMultiplier = input.float(1.3, "Volume Spike Multiplier", display=display.none)
+
+// Breakout
+breakoutLength = input.int(20, "Breakout Lookback", display=display.none)
+
+// ATR
+atrLength = input.int(14, "ATR Length", display=display.none)
+
+// Risk Management
+initialStopAtrMultiplier = input.float(1.5, "Initial Stop ATR", step=0.1, display=display.none)
+target1AtrMultiplier = input.float(1.5, "Target 1 ATR", step=0.1, display=display.none)
+target2AtrMultiplier = input.float(3.0, "Target 2 ATR", step=0.1, display=display.none)
+trailingStopAtrMultiplier = input.float(1.5, "Trailing Stop ATR", step=0.1, display=display.none)
+breakevenTriggerAtr = input.float(1.0, "Break-even Trigger ATR", step=0.1, display=display.none)
+
+// Higher Timeframe
+higherTimeframe = input.timeframe("15", "Higher Timeframe", display=display.none)
+htfEmaLength = input.int(50, "Higher Timeframe EMA", display=display.none)
+
+// Score
+buyThreshold = input.int(65, "BUY Score Threshold", minval=0, maxval=100, display=display.none)
+
+// Sessions
+openingRangeSession = input.session("0915-0930", "Opening Range", display=display.none)
+entrySession = input.session("0930-1445", "Entry Session", display=display.none)
+tradingSession = input.session("0915-1515", "Trading Session", display=display.none)
+
+// Filters
+useOpeningRangeFilter = input.bool(true, "Require Price Above Opening Range High")
+maxVWAPDistanceATR = input.float(2.0, "Normal Maximum VWAP Distance ATR", step=0.1, display=display.none)
+strongBreakoutVWAPDistanceATR = input.float(3.0, "Strong Breakout VWAP Distance ATR", step=0.1, display=display.none)
+cooldownBars = input.int(3, "Trade Cooldown Bars", minval=0, display=display.none)
+
+// ============================================================
+// 2. DISPLAY SETTINGS
+// ============================================================
+
+showFastEMA = input.bool(true, "Show EMA 9")
+showSlowEMA = input.bool(true, "Show EMA 21")
+showEMA200 = input.bool(false, "Show EMA 200")
+showVWAP = input.bool(true, "Show VWAP")
+showSupertrend = input.bool(false, "Show Supertrend")
+
+showOpeningRange = input.bool(true, "Show Opening Range")
+showEntryLine = input.bool(true, "Show Entry Price")
+showInitialStopLine = input.bool(false, "Show Initial Stop")
+showTrailingStopLine = input.bool(true, "Show Trailing Stop")
+showTarget1Line = input.bool(true, "Show Target 1")
+showTarget2Line = input.bool(true, "Show Target 2")
+
+showTradeLabels = input.bool(true, "Show Trade Details")
+showSignalArrow = input.bool(false, "Show Extra BUY Arrow")
+showBackground = input.bool(false, "Show Signal Background")
+showDashboard = input.bool(true, "Show Dashboard")
+
+labelOffsetATR = input.float(2.0, "Trade Label Distance ATR", minval=0.5, step=0.1, display=display.none)
+
+// ============================================================
+// 3. INDICATORS
+// ============================================================
+
+fastEMA = ta.ema(close, fastEmaLength)
+slowEMA = ta.ema(close, slowEmaLength)
+trendEMA = ta.ema(close, trendEmaLength)
+
+vwapValue = ta.vwap(hlc3)
+rsiValue = ta.rsi(close, rsiLength)
+
+[macdLine, macdSignalLine, macdHistogram] = ta.macd(close, macdFast, macdSlow, macdSignalLength)
+
+[supertrendValue, supertrendDirection] = ta.supertrend(supertrendFactor, supertrendAtrLength)
+
+atrValue = ta.atr(atrLength)
+averageVolume = ta.sma(volume, volumeLength)
+
+// ============================================================
+// 4. HIGHER TIMEFRAME
+// ============================================================
+
+htfClose = request.security(syminfo.tickerid, higherTimeframe, close[1], lookahead=barmerge.lookahead_on)
+
+htfEMA = request.security(syminfo.tickerid, higherTimeframe, ta.ema(close, htfEmaLength)[1], lookahead=barmerge.lookahead_on)
+
+htfBullish = htfClose > htfEMA
+htfBearish = htfClose < htfEMA
+
+// ============================================================
+// 5. SESSION STATUS
+// ============================================================
+
+insideOpeningRange = not na(time(timeframe.period, openingRangeSession, "Asia/Kolkata"))
+insideEntrySession = not na(time(timeframe.period, entrySession, "Asia/Kolkata"))
+insideTradingSession = not na(time(timeframe.period, tradingSession, "Asia/Kolkata"))
+
+// ============================================================
+// 6. OPENING RANGE
+// ============================================================
+
+var float openingRangeHigh = na
+var float openingRangeLow = na
+
+newTradingDay = ta.change(time("D")) != 0
+
+if newTradingDay
+    openingRangeHigh := na
+    openingRangeLow := na
+
+if insideOpeningRange
+    openingRangeHigh := na(openingRangeHigh) ? high : math.max(openingRangeHigh, high)
+    openingRangeLow := na(openingRangeLow) ? low : math.min(openingRangeLow, low)
+
+openingRangeReady = not insideOpeningRange and not na(openingRangeHigh) and not na(openingRangeLow)
+
+aboveOpeningRange = openingRangeReady and close > openingRangeHigh
+
+openingRangeFilterPassed = not useOpeningRangeFilter or aboveOpeningRange
+
+// ============================================================
+// 7. BREAKOUT
+// ============================================================
+
+previousResistance = ta.highest(high[1], breakoutLength)
+previousSupport = ta.lowest(low[1], breakoutLength)
+
+bullishBreakout = close > previousResistance
+bearishBreakdown = close < previousSupport
+
+// ============================================================
+// 8. CONDITIONS
+// ============================================================
+
+volumeHealthy = volume > averageVolume
+volumeSpike = volume > averageVolume * volumeMultiplier
+
+emaBullish = fastEMA > slowEMA
+emaBearish = fastEMA < slowEMA
+
+majorTrendBullish = close > trendEMA
+majorTrendBearish = close < trendEMA
+
+vwapBullish = close > vwapValue
+vwapBearish = close < vwapValue
+
+supertrendBullish = supertrendDirection < 0
+supertrendBearish = supertrendDirection > 0
+
+rsiBullish = rsiValue > 50
+rsiBearish = rsiValue < 50
+
+macdBullish = macdLine > macdSignalLine and macdHistogram > 0
+macdBearish = macdLine < macdSignalLine and macdHistogram < 0
+
+// ============================================================
+// 9. BUY SCORE
+// ============================================================
+
+int buyScore = 0
+
+buyScore += emaBullish ? 15 : 0
+buyScore += vwapBullish ? 15 : 0
+buyScore += supertrendBullish ? 15 : 0
+buyScore += rsiBullish ? 10 : 0
+buyScore += macdBullish ? 10 : 0
+buyScore += volumeHealthy ? 10 : 0
+buyScore += volumeSpike ? 5 : 0
+buyScore += bullishBreakout ? 10 : 0
+buyScore += htfBullish ? 5 : 0
+buyScore += majorTrendBullish ? 5 : 0
+
+// ============================================================
+// 10. BEAR SCORE
+// ============================================================
+
+int bearScore = 0
+
+bearScore += emaBearish ? 15 : 0
+bearScore += vwapBearish ? 15 : 0
+bearScore += supertrendBearish ? 15 : 0
+bearScore += rsiBearish ? 10 : 0
+bearScore += macdBearish ? 10 : 0
+bearScore += bearishBreakdown ? 10 : 0
+bearScore += htfBearish ? 5 : 0
+bearScore += majorTrendBearish ? 5 : 0
+
+// ============================================================
+// 11. ADAPTIVE VWAP OVEREXTENSION FILTER
+// ============================================================
+
+// Strong momentum breakout = price breaks recent resistance
+// AND volume is significantly above average.
+strongBreakout = bullishBreakout and volumeSpike
+
+// Normal setup uses default VWAP distance.
+// Strong breakout is allowed a wider VWAP distance.
+allowedVWAPDistanceATR = strongBreakout ? strongBreakoutVWAPDistanceATR : maxVWAPDistanceATR
+
+distanceFromVWAP = math.abs(close - vwapValue)
+
+notOverextended = distanceFromVWAP <= atrValue * allowedVWAPDistanceATR
+
+// ============================================================
+// 12. BUY SETUP
+// ============================================================
+
+longSetup = barstate.isconfirmed and insideEntrySession and openingRangeFilterPassed and buyScore >= buyThreshold and buyScore > bearScore and emaBullish and vwapBullish and notOverextended
+
+freshLongSignal = longSetup and not longSetup[1]
+
+// ============================================================
+// 13. COOLDOWN
+// ============================================================
+
+var int lastTradeBar = na
+
+cooldownComplete = na(lastTradeBar) or bar_index - lastTradeBar > cooldownBars
+
+// ============================================================
+// 14. LONG ENTRY ONLY
+// ============================================================
+
+enterLong = freshLongSignal and strategy.position_size == 0 and cooldownComplete
+
+// ============================================================
+// 15. TRADE VARIABLES
+// ============================================================
+
+var float tradeEntry = na
+var float entryATR = na
+
+var float initialStop = na
+var float trailingStop = na
+
+var float target1 = na
+var float target2 = na
+
+var bool target1Hit = false
+var bool target2Hit = false
+var bool breakevenActive = false
+
+var bool stopAlertSent = false
+var bool target1AlertSent = false
+var bool target2AlertSent = false
+var bool breakevenAlertSent = false
+
+// ============================================================
+// 16. BUY ENTRY
+// ============================================================
+
+if enterLong
+    tradeEntry := close
+    entryATR := atrValue
+
+    initialStop := tradeEntry - entryATR * initialStopAtrMultiplier
+    trailingStop := initialStop
+
+    target1 := tradeEntry + entryATR * target1AtrMultiplier
+    target2 := tradeEntry + entryATR * target2AtrMultiplier
+
+    target1Hit := false
+    target2Hit := false
+    breakevenActive := false
+
+    stopAlertSent := false
+    target1AlertSent := false
+    target2AlertSent := false
+    breakevenAlertSent := false
+
+    lastTradeBar := bar_index
+
+    strategy.entry("L", strategy.long, comment="")
+
+    alert("BUY | " + syminfo.ticker + " | Entry=" + str.tostring(tradeEntry, format.mintick) + " | SL=" + str.tostring(initialStop, format.mintick) + " | T1=" + str.tostring(target1, format.mintick) + " | T2=" + str.tostring(target2, format.mintick) + " | Score=" + str.tostring(buyScore) + " | StrongBreakout=" + str.tostring(strongBreakout), alert.freq_once_per_bar_close)
+
+    if showTradeLabels
+        buyLabelY = low - atrValue * labelOffsetATR
+        label.new(bar_index, buyLabelY, "BUY\nEntry: " + str.tostring(tradeEntry, format.mintick) + "\nSL: " + str.tostring(initialStop, format.mintick) + "\nT1: " + str.tostring(target1, format.mintick) + "\nT2: " + str.tostring(target2, format.mintick), yloc=yloc.price, style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+
+// ============================================================
+// 17. ACTIVE STOP BEFORE UPDATE
+// ============================================================
+
+float stopBeforeUpdate = trailingStop
+
+// ============================================================
+// 18. STOP / TARGET ALERTS
+// ============================================================
+
+if strategy.position_size > 0
+
+    if not stopAlertSent and not na(stopBeforeUpdate) and low <= stopBeforeUpdate
+        alert("STOP HIT | " + syminfo.ticker + " | Stop=" + str.tostring(stopBeforeUpdate, format.mintick), alert.freq_once_per_bar)
+        stopAlertSent := true
+
+    if not target1AlertSent and not na(target1) and high >= target1
+        alert("TARGET 1 HIT | " + syminfo.ticker + " | T1=" + str.tostring(target1, format.mintick), alert.freq_once_per_bar)
+        target1AlertSent := true
+
+    if not target2AlertSent and not na(target2) and high >= target2
+        alert("TARGET 2 HIT | " + syminfo.ticker + " | T2=" + str.tostring(target2, format.mintick), alert.freq_once_per_bar)
+        target2AlertSent := true
+
+// ============================================================
+// 19. TRAILING STOP
+// ============================================================
+
+if strategy.position_size > 0
+    longTrailingCandidate = close - atrValue * trailingStopAtrMultiplier
+    trailingStop := math.max(trailingStop, longTrailingCandidate)
+
+// ============================================================
+// 20. BREAKEVEN MANAGEMENT
+// ============================================================
+
+if strategy.position_size > 0 and high >= tradeEntry + entryATR * breakevenTriggerAtr
+
+    if not breakevenActive
+        breakevenActive := true
+
+        if not breakevenAlertSent
+            alert("BREAKEVEN ACTIVE | " + syminfo.ticker + " | Entry=" + str.tostring(tradeEntry, format.mintick), alert.freq_once_per_bar)
+            breakevenAlertSent := true
+
+    trailingStop := math.max(trailingStop, tradeEntry)
+
+// ============================================================
+// 21. TARGET STATUS
+// ============================================================
+
+if strategy.position_size > 0 and not target1Hit and high >= target1
+    target1Hit := true
+    breakevenActive := true
+    trailingStop := math.max(trailingStop, tradeEntry)
+
+if strategy.position_size > 0 and not target2Hit and high >= target2
+    target2Hit := true
+
+// ============================================================
+// 22. AUTOMATIC EXITS
+// ============================================================
+
+if strategy.position_size > 0
+    strategy.exit("LX1", from_entry="L", stop=trailingStop, limit=target1, qty_percent=50, comment="")
+    strategy.exit("LX2", from_entry="L", stop=trailingStop, limit=target2, qty_percent=50, comment="")
+
+// ============================================================
+// 23. BEARISH EMERGENCY EXIT
+// ============================================================
+
+bearishExitSignal = strategy.position_size > 0 and bearScore >= buyThreshold and bearScore > buyScore and emaBearish and vwapBearish
+
+if bearishExitSignal
+    alert("EXIT LONG - BEARISH REVERSAL | " + syminfo.ticker + " | Price=" + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+    strategy.close("L", comment="")
+
+// ============================================================
+// 24. END OF DAY AUTO EXIT
+// ============================================================
+
+if strategy.position_size != 0 and not insideTradingSession
+    alert("END OF DAY EXIT | " + syminfo.ticker + " | Price=" + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+    strategy.close_all(comment="")
+
+// ============================================================
+// 25. RESET
+// ============================================================
+
+positionJustClosed = strategy.position_size == 0 and strategy.position_size[1] != 0
+
+if positionJustClosed
+    tradeEntry := na
+    entryATR := na
+
+    initialStop := na
+    trailingStop := na
+
+    target1 := na
+    target2 := na
+
+    target1Hit := false
+    target2Hit := false
+    breakevenActive := false
+
+    stopAlertSent := false
+    target1AlertSent := false
+    target2AlertSent := false
+    breakevenAlertSent := false
+
+// ============================================================
+// 26. LIVE P&L
+// ============================================================
+
+float livePnLPoints = na
+float livePnLPercent = na
+
+if strategy.position_size > 0
+    livePnLPoints := close - tradeEntry
+    livePnLPercent := ((close - tradeEntry) / tradeEntry) * 100
+
+// ============================================================
+// 27. INDICATOR LINES
+// ============================================================
+
+plot(showFastEMA ? fastEMA : na, title="EMA 9", color=color.aqua, linewidth=1, display=display.all - display.status_line)
+
+plot(showSlowEMA ? slowEMA : na, title="EMA 21", color=color.orange, linewidth=2, display=display.all - display.status_line)
+
+plot(showEMA200 ? trendEMA : na, title="EMA 200", color=color.purple, linewidth=2, display=display.all - display.status_line)
+
+plot(showVWAP ? vwapValue : na, title="VWAP", color=color.yellow, linewidth=2, display=display.all - display.status_line)
+
+plot(showSupertrend and supertrendBullish ? supertrendValue : na, title="Bullish Supertrend", color=color.green, style=plot.style_linebr, linewidth=1, display=display.all - display.status_line)
+
+plot(showSupertrend and supertrendBearish ? supertrendValue : na, title="Bearish Supertrend", color=color.red, style=plot.style_linebr, linewidth=1, display=display.all - display.status_line)
+
+// ============================================================
+// 28. OPENING RANGE
+// ============================================================
+
+plot(showOpeningRange and openingRangeReady ? openingRangeHigh : na, title="Opening Range High", color=color.new(color.green, 30), style=plot.style_linebr, linewidth=1, display=display.all - display.status_line)
+
+plot(showOpeningRange and openingRangeReady ? openingRangeLow : na, title="Opening Range Low", color=color.new(color.red, 30), style=plot.style_linebr, linewidth=1, display=display.all - display.status_line)
+
+// ============================================================
+// 29. ACTIVE TRADE LEVELS
+// ============================================================
+
+activeEntry = strategy.position_size > 0 ? tradeEntry : na
+activeInitialStop = strategy.position_size > 0 ? initialStop : na
+activeTrailingStop = strategy.position_size > 0 ? trailingStop : na
+activeTarget1 = strategy.position_size > 0 ? target1 : na
+activeTarget2 = strategy.position_size > 0 ? target2 : na
+
+plot(showEntryLine ? activeEntry : na, title="Entry", color=color.blue, style=plot.style_linebr, linewidth=2, display=display.all - display.status_line)
+
+plot(showInitialStopLine ? activeInitialStop : na, title="Initial SL", color=color.maroon, style=plot.style_linebr, linewidth=1, display=display.all - display.status_line)
+
+plot(showTrailingStopLine ? activeTrailingStop : na, title="Trailing SL", color=color.red, style=plot.style_linebr, linewidth=2, display=display.all - display.status_line)
+
+plot(showTarget1Line ? activeTarget1 : na, title="Target 1", color=color.orange, style=plot.style_linebr, linewidth=1, display=display.all - display.status_line)
+
+plot(showTarget2Line ? activeTarget2 : na, title="Target 2", color=color.lime, style=plot.style_linebr, linewidth=1, display=display.all - display.status_line)
+
+// ============================================================
+// 30. OPTIONAL BUY ARROW
+// ============================================================
+
+plotshape(showSignalArrow and enterLong, title="BUY Arrow", text="BUY", location=location.belowbar, style=shape.labelup, color=color.green, textcolor=color.white, size=size.tiny)
+
+// ============================================================
+// 31. OPTIONAL BACKGROUND
+// ============================================================
+
+setupBackground = longSetup ? color.new(color.green, 95) : na
+
+bgcolor(showBackground ? setupBackground : na)
+
+// ============================================================
+// 32. DASHBOARD VALUES
+// ============================================================
+
+signalStatus = enterLong ? "BUY" : longSetup ? "BUY READY" : strategy.position_size > 0 ? "HOLD" : "WAIT"
+
+positionStatus = strategy.position_size > 0 ? "LONG" : "FLAT"
+
+entryText = strategy.position_size == 0 ? "-" : str.tostring(tradeEntry, format.mintick)
+
+stopText = strategy.position_size == 0 ? "-" : str.tostring(trailingStop, format.mintick)
+
+target1Text = strategy.position_size == 0 ? "-" : str.tostring(target1, format.mintick)
+
+target2Text = strategy.position_size == 0 ? "-" : str.tostring(target2, format.mintick)
+
+pnlText = strategy.position_size == 0 ? "-" : str.tostring(livePnLPoints, "#.##") + " / " + str.tostring(livePnLPercent, "#.##") + "%"
+
+breakevenText = strategy.position_size == 0 ? "-" : breakevenActive ? "ACTIVE" : "WAIT"
+
+orHighText = na(openingRangeHigh) ? "-" : str.tostring(openingRangeHigh, format.mintick)
+
+orLowText = na(openingRangeLow) ? "-" : str.tostring(openingRangeLow, format.mintick)
+
+breakoutText = strongBreakout ? "STRONG" : "NORMAL"
+
+vwapDistanceText = str.tostring(distanceFromVWAP / atrValue, "#.##") + " ATR"
+
+// ============================================================
+// 33. DASHBOARD
+// ============================================================
+
+var table dashboard = table.new(position.top_right, 2, 15, bgcolor=color.new(color.black, 20), border_width=1)
+
+if barstate.islast
+
+    if showDashboard
+
+        table.cell(dashboard, 0, 0, "SIGNAL", text_color=color.white)
+        table.cell(dashboard, 1, 0, signalStatus, text_color=signalStatus == "BUY" or signalStatus == "BUY READY" ? color.lime : color.white)
+
+        table.cell(dashboard, 0, 1, "PRICE", text_color=color.white)
+        table.cell(dashboard, 1, 1, str.tostring(close, format.mintick), text_color=color.white)
+
+        table.cell(dashboard, 0, 2, "BUY SCORE", text_color=color.white)
+        table.cell(dashboard, 1, 2, str.tostring(buyScore), text_color=buyScore >= buyThreshold ? color.lime : color.white)
+
+        table.cell(dashboard, 0, 3, "BEAR SCORE", text_color=color.white)
+        table.cell(dashboard, 1, 3, str.tostring(bearScore), text_color=bearScore > buyScore ? color.red : color.white)
+
+        table.cell(dashboard, 0, 4, "POSITION", text_color=color.white)
+        table.cell(dashboard, 1, 4, positionStatus, text_color=strategy.position_size > 0 ? color.lime : color.white)
+
+        table.cell(dashboard, 0, 5, "BUY PRICE", text_color=color.white)
+        table.cell(dashboard, 1, 5, entryText, text_color=color.lime)
+
+        table.cell(dashboard, 0, 6, "STOP", text_color=color.white)
+        table.cell(dashboard, 1, 6, stopText, text_color=color.red)
+
+        table.cell(dashboard, 0, 7, "TARGET 1", text_color=color.white)
+        table.cell(dashboard, 1, 7, target1Text, text_color=color.orange)
+
+        table.cell(dashboard, 0, 8, "TARGET 2", text_color=color.white)
+        table.cell(dashboard, 1, 8, target2Text, text_color=color.lime)
+
+        table.cell(dashboard, 0, 9, "P&L", text_color=color.white)
+        table.cell(dashboard, 1, 9, pnlText, text_color=strategy.position_size == 0 ? color.white : livePnLPoints >= 0 ? color.lime : color.red)
+
+        table.cell(dashboard, 0, 10, "BREAKEVEN", text_color=color.white)
+        table.cell(dashboard, 1, 10, breakevenText, text_color=breakevenActive ? color.lime : color.white)
+
+        table.cell(dashboard, 0, 11, "OR HIGH", text_color=color.white)
+        table.cell(dashboard, 1, 11, orHighText, text_color=color.lime)
+
+        table.cell(dashboard, 0, 12, "OR LOW", text_color=color.white)
+        table.cell(dashboard, 1, 12, orLowText, text_color=color.red)
+
+        table.cell(dashboard, 0, 13, "BREAKOUT", text_color=color.white)
+        table.cell(dashboard, 1, 13, breakoutText, text_color=strongBreakout ? color.lime : color.white)
+
+        table.cell(dashboard, 0, 14, "VWAP DIST", text_color=color.white)
+        table.cell(dashboard, 1, 14, vwapDistanceText, text_color=notOverextended ? color.lime : color.red)
+
+    else
+        table.clear(dashboard, 0, 0, 1, 14)
+
+// ============================================================
+// 34. ALERT CONDITIONS
+// ============================================================
+
+alertcondition(enterLong, title="BUY Signal", message="BUY signal triggered")
+
+alertcondition(bearishExitSignal, title="Bearish Exit", message="Existing LONG position should exit because bearish conditions are dominant")
